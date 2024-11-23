@@ -10,4 +10,4 @@ app.include_router(api.router)
 
 @app.get("/home")
 async def home():
-    return
+    return True
