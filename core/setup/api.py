@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from setup.functions import FirebaseStorage, extract_content
 from setup.model import PDFDocument, SummarisedContent, get_db, SessionLocal
-from setup.gemini import summarizer
+from setup.gemini import summarizer, chat_history
 import google.generativeai as genai
 from sqlalchemy.future import select
 
@@ -95,61 +95,57 @@ async def pdf_search(pdf_id: int) -> dict[str:str]:
         }
 
 
-async def save_summarised(content, pdf, model, db: AsyncSession = Depends(get_db)):
-    summary = SummarisedContent(summary=content, pdf=pdf, model=model)
+def save_summarised(content: str, pdf: int, model: str, db):
+    summary = SummarisedContent(summary=content, pdf_id=pdf, model=model)
 
-    with db as session:
-        session.add(summary)
-        session.commit()
-        session.refresh(summary)
+    with db as db:
+        db.add(summary)
+        db.commit()
+        db.refresh(summary)
 
-    return
+    return summary
 
 
 @router.websocket("/chat/summarize")
-async def pdf_chat(pdf_id: int, websocket: WebSocket):
+async def pdf_chat(
+    pdf_id: int, websocket: WebSocket, db: AsyncSession = Depends(get_db)
+):
     if pdf_id is None:
         websocket.close(code=4001)
 
     pdf = await pdf_search(pdf_id)
-    print(pdf)
-    summary = session.query(SummarisedContent).filter_by(pdf_id=pdf["id"]).first()
 
-    if summary is not None:
-        summarised = summary.summary
-    else:
-        vdata_list = ast.literal_eval(pdf["contents"])
-        for i in range(vdata_list.length):
-            contents = dict()
-            contents[f"passage {i}"] = vdata_list[i]
-        print(contents)
-        summarised = await summarizer(contents, pdf["length"])
-        await save_summarised(summarised, pdf["id"], "gemini")
-    print(summarised)
+    vdata_list = ast.literal_eval(pdf["contents"])
+    contents = {}
+    for i in range(len(vdata_list)):
+        contents[f"passage {i}"] = vdata_list[i]
+
+    chat_history.clear()
+    summarised = await summarizer(contents, pdf["length"])
+    save_summarised(summarised["model"], pdf["id"], "gemini", db)
 
     await websocket.accept()
-    # try:
-    #     while True:
-    #         chat = gemini.start_chat(history=None)
-    #         data = await websocket.receive_text()
-    #         try:
-    #             message = json.loads(data)
-    #             print(message)
-    #             user_message = message["text"]
-    #             if not user_message:
-    #                 await websocket.send_text("Invalid payload: Missing 'message' key")
-    #                 continue
-    #         except json.JSONDecodeError:
-    #             await websocket.send_text("Invalid JSON format.")
-    #             continue
+    await websocket.send_text(summarised["model"])
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+                user_message = message["text"]
+                if not user_message:
+                    await websocket.send_text("Invalid payload: Missing 'message' key")
+                    continue
+            except json.JSONDecodeError:
+                await websocket.send_text("Invalid JSON format.")
+                continue
 
-    #         # Generate response
-    #         response = chat.send_message(user_message)
+            # Generate response
+            response = await summarizer(message["text"])
 
-    #         # Send response back to client
-    #         await websocket.send_text(response.text)
+            # Send response back to client
+            await websocket.send_text(response["model"])
 
-    # except WebSocketDisconnect:
-    websocket.close(4000)
+    except WebSocketDisconnect:
+        websocket.close(4000)
 
     return
