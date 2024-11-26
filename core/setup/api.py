@@ -13,10 +13,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from setup.functions import FirebaseStorage, extract_content
 from setup.model import PDFDocument, SummarisedContent, get_db, SessionLocal
+from setup.gemini import summarizer
 import google.generativeai as genai
 import os
 import json
-from dotenv import load_dotenv
 
 
 # load_dotenv(dotenv_path="../.env")
@@ -34,6 +34,7 @@ gemini = genai.GenerativeModel("gemini-1.5-flash")
 
 @router.post("/upload/pdf")
 async def pdf_upload(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    print(file)
     # file size check -
     if file.size > 300720:
         return HTTPException(detail="File size exceeds the minimum", status_code=413)
@@ -73,42 +74,60 @@ async def pdf(pdf_id: int, db: AsyncSession = Depends(get_db)):
 
 
 async def pdf_search(pdf_id: int) -> dict[str:str]:
-    pdf = session.query(PDFDocument, pdf_id).get()
+    pdf = session.query(PDFDocument, pdf_id).first()
 
     return pdf
 
+async def save_summarised(content, pdf, model, db: AsyncSession = Depends(get_db)):
+    summary = SummarisedContent(
+        summary=content, pdf=pdf, model=model
+    )
+    
+    with db as session:
+        session.add(summary)
+        session.commit()
+        session.refresh(summary)
+    
+    return
+    
 
 @router.websocket("/chat/summarize")
-async def pdf_chat(websocket: WebSocket):
-    # if pdf_id is None:
-    #     websocket.close(code=4001)
+async def pdf_chat(pdf_id: int, websocket: WebSocket):
+    if pdf_id is None:
+        websocket.close(code=4001)
 
-    # pdf = await pdf_search(pdf_id)
+    pdf = await pdf_search(pdf_id)
+    
+    summary = await session.query(SummarisedContent).filter(pdf=pdf.id).get()
+    
+    if summary is None:
+        return
+    else:
+        await semm
+        
     await websocket.accept()
-    try:
-        while True:
-            chat = gemini.start_chat(history=None)
-            data = await websocket.receive_text()
-            try:
-                message = json.loads(data)
-                print(message)
-                user_message = message["text"]
-                if not user_message:
-                    await websocket.send_text("Invalid payload: Missing 'message' key")
-                    continue
-            except json.JSONDecodeError:
-                await websocket.send_text("Invalid JSON format.")
-                continue
+    # try:
+    #     while True:
+    #         chat = gemini.start_chat(history=None)
+    #         data = await websocket.receive_text()
+    #         try:
+    #             message = json.loads(data)
+    #             print(message)
+    #             user_message = message["text"]
+    #             if not user_message:
+    #                 await websocket.send_text("Invalid payload: Missing 'message' key")
+    #                 continue
+    #         except json.JSONDecodeError:
+    #             await websocket.send_text("Invalid JSON format.")
+    #             continue
 
-            # Generate response
-            print(f"User message: {user_message}")
-            response = chat.send_message(user_message)
-            print(f"Generated response: {response.text}")
+    #         # Generate response
+    #         response = chat.send_message(user_message)
 
-            # Send response back to client
-            await websocket.send_text(response.text)
+    #         # Send response back to client
+    #         await websocket.send_text(response.text)
 
-    except WebSocketDisconnect:
-        websocket.close(4000)
+    # except WebSocketDisconnect:
+    websocket.close(4000)
 
     return

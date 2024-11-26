@@ -1,5 +1,8 @@
 import google.generativeai as genai
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def summarizer(
@@ -14,7 +17,7 @@ def summarizer(
     # Convert dictionary to a plain string
     text_input = "\n".join([f"{key}: {value}" for key, value in content.items()])
     print(text_input)
-    
+
     genai.configure(api_key=os.getenv("ModelApiKey"))
     model = genai.GenerativeModel("gemini-1.5-flash")
     model.start_chat(
@@ -29,8 +32,8 @@ def summarizer(
             },
         ]
     )
-    
+
     response = model.generate_content(text_input)
     print(response.text)
-    
-    return {"model":response.text}
+
+    return {"model": response.text}

@@ -2,11 +2,11 @@ import os
 import pyrebase
 import uuid
 from urllib.parse import unquote, urlparse
-from dotenv import load_dotenv
 from pypdf import PdfReader
 from fastapi import UploadFile
+from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=".env")
+load_dotenv()
 
 
 class FirebaseStorage:
