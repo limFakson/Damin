@@ -15,7 +15,7 @@ def summarizer(
         }
 
     # Convert dictionary to a plain string
-    text_input = "\n".join([f"{key}: {value}" for key, value in content.items()])
+    text_input = ",".join([f"{key}: {value}" for key, value in content.items()])
     print(text_input)
 
     genai.configure(api_key=os.getenv("ModelApiKey"))
@@ -34,6 +34,5 @@ def summarizer(
     )
 
     response = model.generate_content(text_input)
-    print(response.text)
 
     return {"model": response.text}

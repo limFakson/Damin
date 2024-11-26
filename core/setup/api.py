@@ -15,6 +15,9 @@ from setup.functions import FirebaseStorage, extract_content
 from setup.model import PDFDocument, SummarisedContent, get_db, SessionLocal
 from setup.gemini import summarizer
 import google.generativeai as genai
+from sqlalchemy.future import select
+
+import ast
 import os
 import json
 
@@ -28,13 +31,9 @@ class pdf_upload(BaseModel):
 
 router = APIRouter()
 
-genai.configure(api_key="AIzaSyCqIvSpnw86R0T51CMDSKHSMMfFgqFBIN0")
-gemini = genai.GenerativeModel("gemini-1.5-flash")
-
 
 @router.post("/upload/pdf")
 async def pdf_upload(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    print(file)
     # file size check -
     if file.size > 300720:
         return HTTPException(detail="File size exceeds the minimum", status_code=413)
@@ -69,27 +68,43 @@ session = SessionLocal()
 
 @router.get("/pdf/summarise/{pdf_id}")
 async def pdf(pdf_id: int, db: AsyncSession = Depends(get_db)):
-    pdf = session.query(PDFDocument).all()
-    return pdf
+    result = db.execute(select(PDFDocument).filter_by(id=pdf_id))
+    pdf_data = result.scalars().first()
+
+    if pdf_data:
+        return {
+            "id": pdf_data.id,
+            "name": pdf_data.name,
+            "contents": pdf_data.contents,
+            "url": pdf_data.url,
+            "length": pdf_data.length,
+        }
+    return {"error": "PDF not found"}
 
 
 async def pdf_search(pdf_id: int) -> dict[str:str]:
-    pdf = session.query(PDFDocument, pdf_id).first()
+    pdf = session.query(PDFDocument).filter_by(id=pdf_id).first()
 
-    return pdf
+    if pdf:
+        return {
+            "id": pdf.id,
+            "name": pdf.name,
+            "contents": pdf.contents,
+            "url": pdf.url,
+            "length": pdf.length,
+        }
+
 
 async def save_summarised(content, pdf, model, db: AsyncSession = Depends(get_db)):
-    summary = SummarisedContent(
-        summary=content, pdf=pdf, model=model
-    )
-    
+    summary = SummarisedContent(summary=content, pdf=pdf, model=model)
+
     with db as session:
         session.add(summary)
         session.commit()
         session.refresh(summary)
-    
+
     return
-    
+
 
 @router.websocket("/chat/summarize")
 async def pdf_chat(pdf_id: int, websocket: WebSocket):
@@ -97,14 +112,21 @@ async def pdf_chat(pdf_id: int, websocket: WebSocket):
         websocket.close(code=4001)
 
     pdf = await pdf_search(pdf_id)
-    
-    summary = await session.query(SummarisedContent).filter(pdf=pdf.id).get()
-    
-    if summary is None:
-        return
+    print(pdf)
+    summary = session.query(SummarisedContent).filter_by(pdf_id=pdf["id"]).first()
+
+    if summary is not None:
+        summarised = summary.summary
     else:
-        await semm
-        
+        vdata_list = ast.literal_eval(pdf["contents"])
+        for i in range(vdata_list.length):
+            contents = dict()
+            contents[f"passage {i}"] = vdata_list[i]
+        print(contents)
+        summarised = await summarizer(contents, pdf["length"])
+        await save_summarised(summarised, pdf["id"], "gemini")
+    print(summarised)
+
     await websocket.accept()
     # try:
     #     while True:
