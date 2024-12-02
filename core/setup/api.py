@@ -9,25 +9,23 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from setup.functions import FirebaseStorage, extract_content
-from setup.model import PDFDocument, SummarisedContent, get_db, SessionLocal
-from setup.gemini import summarizer, chat_history
-import google.generativeai as genai
+from setup.model import (
+    PDFDocument,
+    get_db,
+    SessionLocal,
+    ChatSystem,
+    Message,
+)
+from setup.gemini import summarizer
+from setup.session import MessageBase, ChatSystemBase
 from sqlalchemy.future import select
+from sqlalchemy.orm import joinedload
 
 import ast
 import os
 import json
-
-
-# load_dotenv(dotenv_path="../.env")
-
-
-class pdf_upload(BaseModel):
-    name: str = None
-
 
 router = APIRouter()
 
@@ -35,8 +33,8 @@ router = APIRouter()
 @router.post("/upload/pdf")
 async def pdf_upload(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     # file size check -
-    if file.size > 300720:
-        return HTTPException(detail="File size exceeds the minimum", status_code=413)
+    if file.size > 20000480:
+        raise HTTPException(detail="File size exceeds the minimum", status_code=413)
 
     # Firebase initialise
     firebase = FirebaseStorage(file=file)
@@ -58,16 +56,18 @@ async def pdf_upload(file: UploadFile = File(...), db: AsyncSession = Depends(ge
     return {"message": "PDF uploaded successfully", "pdf": new_pdf}
 
 
-# @router.get("/pdf/<id>")
-# async def pdf_retrive(id: id):
-#     return
+@router.get("/pdf")
+async def pdf_retrive():
+    pdf = session.query(PDFDocument).all()
+    return pdf
 
 
 session = SessionLocal()
 
 
-@router.get("/pdf/summarise/{pdf_id}")
+@router.get("/pdf/retrieve/{pdf_id}")
 async def pdf(pdf_id: int, db: AsyncSession = Depends(get_db)):
+    db.connections.close_all()
     result = db.execute(select(PDFDocument).filter_by(id=pdf_id))
     pdf_data = result.scalars().first()
 
@@ -95,15 +95,38 @@ async def pdf_search(pdf_id: int) -> dict[str:str]:
         }
 
 
-def save_summarised(content: str, pdf: int, model: str, db):
-    summary = SummarisedContent(summary=content, pdf_id=pdf, model=model)
+async def create_chat(pdf_id: int, db):
+    chat = ChatSystem(pdf_id=pdf_id)
 
     with db as db:
-        db.add(summary)
+        db.add(chat)
         db.commit()
-        db.refresh(summary)
+        db.refresh(chat)
 
-    return summary
+    return chat.id
+
+
+async def save_message(chat_id: int, type: str, text: str, db):
+    message = Message(chat_id=chat_id, type=type, text=text)
+
+    with db as db:
+        db.add(message)
+        db.commit()
+        db.refresh(message)
+
+    return message
+
+
+async def check_chat(pdf_id: int):
+    chat = (
+        session.query(ChatSystem)
+        .filter(ChatSystem.pdf_id == pdf_id)
+        .options(joinedload(ChatSystem.messages))
+        .first()
+    )
+    if chat:
+        return ChatSystemBase.model_validate(chat)
+    return False
 
 
 @router.websocket("/chat/summarize")
@@ -111,41 +134,73 @@ async def pdf_chat(
     pdf_id: int, websocket: WebSocket, db: AsyncSession = Depends(get_db)
 ):
     if pdf_id is None:
-        websocket.close(code=4001)
+        await websocket.close(code=4001)
 
     pdf = await pdf_search(pdf_id)
-
-    vdata_list = ast.literal_eval(pdf["contents"])
-    contents = {}
-    for i in range(len(vdata_list)):
-        contents[f"passage {i}"] = vdata_list[i]
-
-    chat_history.clear()
-    summarised = await summarizer(contents, pdf["length"])
-    save_summarised(summarised["model"], pdf["id"], "gemini", db)
+    chat_and_message = await check_chat(pdf_id)
 
     await websocket.accept()
-    await websocket.send_text(summarised["model"])
+    if chat_and_message:
+        chat_id = chat_and_message.id
+        if not chat_and_message.messages:
+            # convert str into a dict then to str
+            vdata_list = ast.literal_eval(pdf["contents"])
+            contents = {}
+            for i in range(len(vdata_list)):
+                contents[f"passage {i}"] = vdata_list[i]
+
+            pdf_content = "\n".join(
+                [f"{key}: {value}" for key, value in contents.items()]
+            )
+
+            await save_message(chat_id, "sent", pdf_content, db)
+            summarised = await summarizer(pdf_content)
+
+            await save_message(chat_id, "received", summarised["model"], db)
+            await websocket.send_text(summarised["model"])
+        else:
+            messages_data = [message.dict() for message in chat_and_message.messages]
+            messages_json = json.dumps(messages_data)
+
+            await websocket.send_text(messages_json)
+    else:
+        new_chat = await create_chat(pdf_id, db)
+
+        # convert str into a dict then to str
+        vdata_list = ast.literal_eval(pdf["contents"])
+        contents = {}
+        for i in range(len(vdata_list)):
+            contents[f"passage {i}"] = vdata_list[i]
+
+        pdf_content = "\n".join(
+            [f"{key} + 1: {value}" for key, value in contents.items()]
+        )
+
+        await save_message(new_chat, "sent", pdf_content, db)
+        summarised = await summarizer(pdf_content)
+        await save_message(new_chat, "received", summarised["model"], db)
+        await websocket.send_text(summarised["model"])
+
     try:
         while True:
             data = await websocket.receive_text()
             try:
                 message = json.loads(data)
-                user_message = message["text"]
-                if not user_message:
-                    await websocket.send_text("Invalid payload: Missing 'message' key")
-                    continue
-            except json.JSONDecodeError:
-                await websocket.send_text("Invalid JSON format.")
+                chat = await check_chat(pdf_id)
+                saved_message = await save_message(chat.id, "sent", message["text"], db)
+            except Exception as e:
+                await websocket.send_text(f"Error loading message - error{e}")
                 continue
+            except WebSocketDisconnect:
+                await websocket.close(4000)
 
-            # Generate response
-            response = await summarizer(message["text"])
+            messages_data = [message.dict() for message in chat.messages]
+            response = await summarizer(message["text"], messages_data)
+            saved_message = await save_message(
+                chat.id, "received", response["model"], db
+            )
 
-            # Send response back to client
             await websocket.send_text(response["model"])
 
     except WebSocketDisconnect:
-        websocket.close(4000)
-
-    return
+        await websocket.close(4000)

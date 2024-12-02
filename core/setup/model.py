@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, URL, ForeignKey,
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 
 Base = declarative_base()
 
@@ -34,9 +34,42 @@ class SummarisedContent(Base):
     )
 
 
+class ChatSystem(Base):
+    __tablename__ = "chat_systems"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pdf_id = Column(Integer, ForeignKey("pdf_documents.id"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # Relationship with Message
+    messages = relationship(
+        "Message",
+        back_populates="chat_system",
+        lazy="joined",
+        order_by="Message.id.asc()",
+    )
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("chat_systems.id"))
+    type = Column(String(50), nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # Relationship with ChatSystem
+    chat_system = relationship("ChatSystem", back_populates="messages")
+
+
 DATABASE_URL = "sqlite:///./test.db"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(DATABASE_URL, connect_args={"timeout": 30})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
