@@ -10,7 +10,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from setup.functions import FirebaseStorage, extract_content
+from setup.functions import FirebaseStorage, extract_content, make_audio
 from setup.model import (
     PDFDocument,
     get_db,
@@ -147,7 +147,7 @@ async def pdf_chat(
             vdata_list = ast.literal_eval(pdf["contents"])
             contents = {}
             for i in range(len(vdata_list)):
-                contents[f"passage {i}"] = vdata_list[i]
+                contents[f"passage {i+1}"] = vdata_list[i]
 
             pdf_content = "\n".join(
                 [f"{key}: {value}" for key, value in contents.items()]
@@ -170,11 +170,9 @@ async def pdf_chat(
         vdata_list = ast.literal_eval(pdf["contents"])
         contents = {}
         for i in range(len(vdata_list)):
-            contents[f"passage {i}"] = vdata_list[i]
+            contents[f"passage {i +1}"] = vdata_list[i]
 
-        pdf_content = "\n".join(
-            [f"{key} + 1: {value}" for key, value in contents.items()]
-        )
+        pdf_content = "\n".join([f"{key}: {value}" for key, value in contents.items()])
 
         await save_message(new_chat, "sent", pdf_content, db)
         summarised = await summarizer(pdf_content)
@@ -204,3 +202,9 @@ async def pdf_chat(
 
     except WebSocketDisconnect:
         await websocket.close(4000)
+
+
+@router.get("/pdf/audio/{pdf_id}")
+async def pdf_audio(pdf_id: int):
+    pdf = await pdf_search(pdf_id)
+    await make_audio(pdf["contents"], [0])

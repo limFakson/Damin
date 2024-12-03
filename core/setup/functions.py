@@ -1,10 +1,12 @@
 import os
 import pyrebase
 import uuid
+import ast
 from urllib.parse import unquote, urlparse
 from pypdf import PdfReader
 from fastapi import UploadFile
 from dotenv import load_dotenv
+from gtts import gTTS
 
 load_dotenv()
 
@@ -86,3 +88,18 @@ def extract_content(docs: UploadFile, ext):
         return
 
     return str(text_extracted), number_of_pages
+
+
+async def make_audio(content, pref_len):
+    # convert str into a dict then to str
+    vdata_list = ast.literal_eval(content)
+    extracted_list = [vdata_list[i] for i in pref_len]
+
+    contents = {}
+    for i in range(len(extracted_list)):
+        contents[f"passage {i + 1}"] = extracted_list[i]
+
+    pdf_content = "\n".join([f"{key}: {value}" for key, value in contents.items()])
+
+    tts = gTTS(pdf_content, lang='es')
+    tts.save("speech.mp3")
