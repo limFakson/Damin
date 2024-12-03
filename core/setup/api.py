@@ -10,16 +10,16 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from setup.functions import FirebaseStorage, extract_content, make_audio
-from setup.model import (
+from core.setup.functions import FirebaseStorage, extract_content, make_audio
+from core.setup.model import (
     PDFDocument,
     get_db,
     SessionLocal,
     ChatSystem,
     Message,
 )
-from setup.gemini import summarizer
-from setup.session import MessageBase, ChatSystemBase
+from core.setup.gemini import summarizer
+from core.setup.session import MessageBase, ChatSystemBase
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 
