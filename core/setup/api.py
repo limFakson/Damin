@@ -10,16 +10,16 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.setup.functions import FirebaseStorage, extract_content, make_audio
-from core.setup.model import (
+from .functions import FirebaseStorage, extract_content, make_audio
+from .model import (
     PDFDocument,
     get_db,
     SessionLocal,
     ChatSystem,
     Message,
 )
-from core.setup.gemini import summarizer
-from core.setup.session import MessageBase, ChatSystemBase
+from .gemini import summarizer
+from .session import MessageBase, ChatSystemBase
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
 
@@ -67,9 +67,7 @@ session = SessionLocal()
 
 @router.get("/pdf/retrieve/{pdf_id}")
 async def pdf(pdf_id: int, db: AsyncSession = Depends(get_db)):
-    db.connections.close_all()
-    result = db.execute(select(PDFDocument).filter_by(id=pdf_id))
-    pdf_data = result.scalars().first()
+    pdf_data = session.query(PDFDocument).filter_by(id=pdf_id).first()
 
     if pdf_data:
         return {
@@ -143,6 +141,9 @@ async def pdf_chat(
     if chat_and_message:
         chat_id = chat_and_message.id
         if not chat_and_message.messages:
+            if pdf["length"] > 100:
+                await websocket.send_text("Pdf Pages exceeds maximum limit")
+                await websocket.close(code=4001)
             # convert str into a dict then to str
             vdata_list = ast.literal_eval(pdf["contents"])
             contents = {}
@@ -165,7 +166,9 @@ async def pdf_chat(
             await websocket.send_text(messages_json)
     else:
         new_chat = await create_chat(pdf_id, db)
-
+        if pdf["length"] > 100:
+            await websocket.send_text("Pdf Pages exceeds maximum limit")
+            await websocket.close(code=4001)
         # convert str into a dict then to str
         vdata_list = ast.literal_eval(pdf["contents"])
         contents = {}
@@ -205,6 +208,10 @@ async def pdf_chat(
 
 
 @router.get("/pdf/audio/{pdf_id}")
-async def pdf_audio(pdf_id: int):
+async def pdf_audio(pdf_id: int, pages: str):
+    # convert str into a dict then to str
+    vdata_list = ast.literal_eval(pages)
     pdf = await pdf_search(pdf_id)
-    await make_audio(pdf["contents"], [0])
+    audio_link = await make_audio(pdf["contents"], vdata_list)
+
+    return {"audio": audio_link}

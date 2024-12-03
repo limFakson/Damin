@@ -7,6 +7,7 @@ from pypdf import PdfReader
 from fastapi import UploadFile
 from dotenv import load_dotenv
 from gtts import gTTS
+from pydub import AudioSegment
 
 load_dotenv()
 
@@ -54,6 +55,18 @@ class FirebaseStorage:
 
         return storage_url, filename, ext
 
+    # function to store document files
+    def store_audio(self, file, ext):
+        storage_name = f"audio/{uuid.uuid4()}{ext}"
+
+        # Store file in Firebase storage
+        self.storage.child(storage_name).put(file)
+
+        # Storage url from firebase storage
+        storage_url = self.storage.child(storage_name).get_url(None)
+
+        return storage_url
+
     def delete(self, file_url):
         # Authenticate user and get the token
         user = self.auth.sign_in_with_email_and_password(
@@ -91,15 +104,50 @@ def extract_content(docs: UploadFile, ext):
 
 
 async def make_audio(content, pref_len):
-    # convert str into a dict then to str
+    """
+    Generate audio for selected pages and merge them into a single MP3 file.
+
+    Args:
+        content (str): Content in string format representing a dictionary of pages.
+        pref_len (list[int]): List of page numbers to be converted to audio.
+
+    Returns:
+        str: The path to the merged MP3 file.
+    """
+    # Convert content string to a dictionary
     vdata_list = ast.literal_eval(content)
     extracted_list = [vdata_list[i] for i in pref_len]
 
-    contents = {}
-    for i in range(len(extracted_list)):
-        contents[f"passage {i + 1}"] = extracted_list[i]
+    # Generate and save audio for each selected page
+    audio_segments = []
+    temp_files = []  # Keep track of temporary audio files
+    for idx, page_text in enumerate(extracted_list):
+        tts = gTTS(page_text)
+        page_audio_path = f"page_{idx + 1}.mp3"
+        tts.save(page_audio_path)
 
-    pdf_content = "\n".join([f"{key}: {value}" for key, value in contents.items()])
+        # Load the audio into pydub for merging
+        audio_segment = AudioSegment.from_file(page_audio_path)
+        audio_segments.append(audio_segment)
 
-    tts = gTTS(pdf_content, lang='es')
-    tts.save("speech.mp3")
+        # Add file to the temp list for deletion later
+        temp_files.append(page_audio_path)
+
+    # Merge all audio files into one
+    merged_audio = sum(audio_segments)
+
+    # Save the merged audio file
+    merged_audio_path = "merged_speech.mp3"
+    merged_audio.export(merged_audio_path, format="mp3")
+
+    # Delete temporary audio files
+    for temp_file in temp_files:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+    # Store merged audio to firebase
+    firebase_storage_path = f"audio_files/{merged_audio_path}"
+    firebase = FirebaseStorage()
+    audio_url = firebase.store_audio(merged_audio_path, "mp3")
+
+    return audio_url
