@@ -166,7 +166,7 @@ async def pdf_chat(
             await websocket.send_text(messages_json)
     else:
         new_chat = await create_chat(pdf_id, db)
-        if pdf["length"] > 100:
+        if pdf["length"] > 500:
             await websocket.send_text("Pdf Pages exceeds maximum limit")
             await websocket.close(code=4001)
         # convert str into a dict then to str
