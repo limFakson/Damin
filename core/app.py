@@ -1,8 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from setup.model import get_db, PDFDocument, SummarisedContent
-from setup import api
+from core.setup import api
 
 app = FastAPI()
 
