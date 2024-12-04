@@ -121,8 +121,10 @@ async def make_audio(content, pref_len):
     # Generate and save audio for each selected page
     audio_segments = []
     temp_files = []  # Keep track of temporary audio files
+    content = []
     for idx, page_text in enumerate(extracted_list):
         tts = gTTS(page_text)
+        content.append(page_text)
         page_audio_path = f"page_{idx + 1}.mp3"
         tts.save(page_audio_path)
 
@@ -150,4 +152,4 @@ async def make_audio(content, pref_len):
     firebase = FirebaseStorage()
     audio_url = firebase.store_audio(merged_audio_path, "mp3")
 
-    return audio_url
+    return audio_url, content

@@ -212,6 +212,6 @@ async def pdf_audio(pdf_id: int, pages: str):
     # convert str into a dict then to str
     vdata_list = ast.literal_eval(pages)
     pdf = await pdf_search(pdf_id)
-    audio_link = await make_audio(pdf["contents"], vdata_list)
+    audio_link, text_array = await make_audio(pdf["contents"], vdata_list)
 
-    return {"audio": audio_link}
+    return {"audio": audio_link, "text": text_array}
