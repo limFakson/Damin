@@ -10,6 +10,7 @@ origins = [
     "https://localhost.tiangolo.com",
     "http://localhost",
     "http://localhost:3000",
+    "https://damin-tts.vercel.app/",
 ]
 
 app.add_middleware(
